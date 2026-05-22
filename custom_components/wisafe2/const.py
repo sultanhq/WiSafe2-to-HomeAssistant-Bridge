@@ -25,6 +25,7 @@ DEVICE_MODELS = {
     "0501": {"name": "FP1720W2", "type": DEVICE_TYPE_HEAT, "description": "Heat Alarm"},
     "7401": {"name": "FP1720W2-R", "type": DEVICE_TYPE_HEAT, "description": "Heat Alarm"},
     "0601": {"name": "W2-SVP-630", "type": DEVICE_TYPE_STROBE, "description": "Strobe Unit"},
+    "4304": {"name": "FP2620W2", "type": DEVICE_TYPE_SMOKE, "description": "Smoke Alarm"},
     "ED08": {"name": "FP2620W2", "type": DEVICE_TYPE_SMOKE, "description": "Smoke Alarm"},
     "7803": {"name": "W2-CO-10X", "type": DEVICE_TYPE_CO, "description": "Carbon Monoxide Alarm"},
     "C304": {"name": "W2-SVP-630", "type": DEVICE_TYPE_STROBE, "description": "Strobe Unit"},
