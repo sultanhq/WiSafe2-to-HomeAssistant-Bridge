@@ -17,13 +17,17 @@ DEVICE_TYPE_STROBE = "strobe"
 DEVICE_TYPE_COMBINED = "combined"
 DEVICE_TYPE_BRIDGE = "bridge"
 
-# Device models mapping
+# Device models mapping (keys must be uppercase)
 DEVICE_MODELS = {
     "1103": {"name": "WST-630", "type": DEVICE_TYPE_COMBINED, "description": "Smoke/Strobe Unit"},
     "0301": {"name": "W2-CO-10X", "type": DEVICE_TYPE_CO, "description": "Carbon Monoxide Alarm"},
     "0401": {"name": "FP2620W2", "type": DEVICE_TYPE_SMOKE, "description": "Smoke Alarm"},
     "0501": {"name": "FP1720W2", "type": DEVICE_TYPE_HEAT, "description": "Heat Alarm"},
+    "7401": {"name": "FP1720W2-R", "type": DEVICE_TYPE_HEAT, "description": "Heat Alarm"},
     "0601": {"name": "W2-SVP-630", "type": DEVICE_TYPE_STROBE, "description": "Strobe Unit"},
+    "ED08": {"name": "FP2620W2", "type": DEVICE_TYPE_SMOKE, "description": "Smoke Alarm"},
+    "7803": {"name": "W2-CO-10X", "type": DEVICE_TYPE_CO, "description": "Carbon Monoxide Alarm"},
+    "C304": {"name": "W2-SVP-630", "type": DEVICE_TYPE_STROBE, "description": "Strobe Unit"},
 }
 
 # Event types from radio
