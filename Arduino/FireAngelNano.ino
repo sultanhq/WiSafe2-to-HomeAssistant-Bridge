@@ -96,7 +96,7 @@ boolean initRadio()
    
   sendCMDToRadio(cmdTemplate, sizeof(cmdTemplate), true);
   delay(500);
-  if ((spiBuffer[0] != (0x46)) && (spiBuffer[1] != (0x7E))) {
+  if (spiBufferIndex < 2 || (spiBuffer[0] != (0x46)) || (spiBuffer[1] != (0x7E))) {
     Serial.print(".");
     return (false);
   }
@@ -397,6 +397,10 @@ void ReadByteFromRadio()
     IRQLastState = IRQState;
     if (SPIreceived == true)
     {
+      if (spiBufferIndex >= BUFFER_SIZE) {
+        flushSPIbuffer();
+        return;
+      }
       spiBuffer[spiBufferIndex++] = Slavereceived;
       spiBufferDumpCounter = 0;
       if (Slavereceived == 0x7E) {
@@ -444,6 +448,17 @@ void WriteByteToRadio(byte byteToSend)
 
 void processRadioResponse()
 {
+  if (spiBufferIndex < 2 || spiBuffer[spiBufferIndex - 1] != 0x7E) return;
+  byte minimumLength = 0;
+  switch (spiBuffer[0]) {
+    case 0x70: minimumLength = 9; break;
+    case 0x71: minimumLength = 8; break;
+    case 0x50: minimumLength = 6; break;
+    case 0x61: minimumLength = 5; break;
+    case 0xD2: minimumLength = 10; break;
+    default: return;
+  }
+  if (spiBufferIndex < minimumLength) return;
 lastHeartBeat = millis();                                                                       //Delay the next heartbeat to ensure it doesnt come instantly after a message
   
   if (spiBuffer[0] == 0x70)                                                                     // Test Event
@@ -560,3 +575,4 @@ void loop()
   ReadByteFromSerial();                                     // read serial buffer and send it to the radio when its ready
   processHeartBeat();
 }
+

@@ -32,7 +32,7 @@ async def async_setup_entry(
         WiSafe2StartPairingButton(coordinator, config_entry),
     ]
 
-    async_add_entities(entities)
+    async_add_entities(entities if config_entry.options.get("allow_commands", False) else [])
 
 
 class WiSafe2ButtonBase(CoordinatorEntity, ButtonEntity):
@@ -196,3 +196,4 @@ class WiSafe2StartPairingButton(WiSafe2ButtonBase):
     async def async_press(self) -> None:
         """Handle the button press."""
         await self.coordinator.async_start_pairing()
+

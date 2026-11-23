@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
     DOMAIN,
@@ -17,6 +18,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import WiSafe2Coordinator
+from .protocol import valid_device_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,7 +46,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     # Add configured devices
-    devices = entry.options.get("devices", [])
+    devices = [d for d in entry.options.get("devices", [])
+               if valid_device_id(d.get("device_id"))
+               and d["device_id"].lower() != coordinator.bridge_radio_id]
     for device_config in devices:
         coordinator.add_device(
             device_id=device_config["device_id"],
@@ -52,6 +56,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             name=device_config.get("name"),
         )
 
+    # Quarantine obsolete/invalid entries without deleting their registry/history.
+    if devices != entry.options.get("devices", []):
+        hass.config_entries.async_update_entry(entry, options={**entry.options, "devices": devices})
+    registry = dr.async_get(hass)
+    entities = er.async_get(hass)
+    allowed_ids = {d["device_id"].lower() for d in devices}
+    for item in dr.async_entries_for_config_entry(registry, entry.entry_id):
+        radio_ids = [identifier for domain, identifier in item.identifiers if domain == DOMAIN and identifier != "bridge"]
+        if radio_ids and not any(identifier in allowed_ids for identifier in radio_ids):
+            registry.async_update_device(item.id, disabled_by=dr.DeviceEntryDisabler.INTEGRATION)
+    if not entry.options.get("allow_commands", False):
+        for entity in er.async_entries_for_config_entry(entities, entry.entry_id):
+            if entity.domain == "button" and entity.disabled_by is None:
+                entities.async_update_entity(entity.entity_id, disabled_by=er.RegistryEntryDisabler.INTEGRATION)
     # Store coordinator
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
@@ -74,7 +92,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             manufacturer="FireAngel",
             model=device.name or "Unknown Model",
             name=device.name or f"WiSafe2 Alarm {device_id}",
-            via_device=(DOMAIN, "bridge"),
+            via_device_id=device_registry.async_get_device(identifiers={(DOMAIN, "bridge")}).id,
         )
 
     # Set up platforms
@@ -121,3 +139,4 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         pass
 
     return True
+

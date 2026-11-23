@@ -17,6 +17,8 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .protocol import LineBuffer, parse_message, valid_device_id
+
 from .const import (
     DOMAIN,
     HEARTBEAT_TIMEOUT,
@@ -57,7 +59,9 @@ class WiSafe2Device:
         self.base_status: str = "unknown"
         self.last_event: str | None = None
         self.last_test_result: str | None = None
-        self.is_online: bool = True
+        self.is_online: bool | None = None
+        self.smoke_active: bool | None = None
+        self.co_active: bool | None = None
 
         if model_id:
             model_id_upper = model_id.upper()
@@ -68,7 +72,20 @@ class WiSafe2Device:
 
     def update_from_message(self, data: dict[str, Any]) -> None:
         """Update device state from a parsed message."""
-        self.last_seen = dt_util.utcnow()
+        if data.get("event") != "MISSING":
+            self.last_seen = dt_util.utcnow()
+            self.is_online = True
+        event = data.get("event")
+        if event == "FIRE EMERGENCY":
+            self.smoke_active = True
+        elif event == "CARBON MONOXIDE EMERGENCY":
+            self.co_active = True
+        elif event == "SILENCE":
+            self.smoke_active = self.co_active = False
+        elif event in {"FIRE TEST", "BUTTON TEST"} and data.get("result") == "PASS":
+            self.smoke_active = False
+        elif event == "CARBON MONOXIDE TEST" and data.get("result") == "PASS":
+            self.co_active = False
 
         if "battery" in data:
             self.battery_status = data["battery"]
@@ -102,7 +119,12 @@ class WiSafe2Coordinator(DataUpdateCoordinator):
         )
         self.config_entry = config_entry
         self.serial_port = serial_port
-        self.baud_rate = baud_rate
+        self.baud_rate = int(baud_rate)
+        self.bridge_radio_id = config_entry.options.get("bridge_radio_id", "a5b813").lower()
+        self.auto_discover = config_entry.options.get("auto_discover", False)
+        self._lines = LineBuffer()
+        self.rejected_messages = 0
+        self.unconfigured_devices: dict[str, str | None] = {}
         self._serial: serial.Serial | None = None
         self._devices: dict[str, WiSafe2Device] = {}
         self._bridge_online = False
@@ -152,7 +174,7 @@ class WiSafe2Coordinator(DataUpdateCoordinator):
                 self._open_serial_connection
             )
             self._running = True
-            self._read_task = self.hass.async_create_task(self._async_read_serial())
+            self._read_task = self.hass.async_create_background_task(self._async_read_serial(), "wisafe2_serial_reader")
             _LOGGER.info("WiSafe2 bridge connected on %s", self.serial_port)
             return True
         except Exception as err:
@@ -183,38 +205,50 @@ class WiSafe2Coordinator(DataUpdateCoordinator):
 
     async def _async_read_serial(self) -> None:
         """Read data from serial port."""
-        buffer = ""
+        retry_delay = 1
         while self._running:
             try:
-                if self._serial and self._serial.in_waiting:
-                    data = await self.hass.async_add_executor_job(
-                        self._serial.readline
-                    )
-                    if data:
-                        try:
-                            line = data.decode("utf-8").strip()
-                            if line:
-                                self._raw_data = line
-                                await self._process_line(line)
-                        except UnicodeDecodeError:
-                            _LOGGER.debug("Failed to decode serial data")
-                else:
-                    await asyncio.sleep(0.1)
-            except Exception as err:
-                _LOGGER.error("Error reading serial: %s", err)
+                if self._serial is None:
+                    self._serial = await self.hass.async_add_executor_job(self._open_serial_connection)
+                    self._lines = LineBuffer()
+                data = await self.hass.async_add_executor_job(self._read_chunk)
+                retry_delay = 1
+                for line in self._lines.feed(data):
+                    self._raw_data = line
+                    await self._process_line(line)
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                raise
+            except (serial.SerialException, OSError) as err:
+                _LOGGER.warning("WiSafe2 serial connection lost; reconnecting: %s", err)
+                self._last_heartbeat = None
+                self._bridge_online = False
+                if self._serial:
+                    try:
+                        await self.hass.async_add_executor_job(self._serial.close)
+                    except (serial.SerialException, OSError):
+                        pass
+                self._serial = None
+                self.async_set_updated_data({"bridge_online": False})
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 30)
+            except Exception:
+                _LOGGER.exception("WiSafe2 message processing failed")
                 await asyncio.sleep(1)
 
+    def _read_chunk(self) -> bytes:
+        """All serial IO stays off the event loop."""
+        return self._serial.read(min(self._serial.in_waiting or 1, 4096))
+
     async def _process_line(self, line: str) -> None:
-        """Process a line of data from the bridge."""
-        try:
-            # Try to parse as JSON
+        """Accept complete, validated JSON only."""
+        data = parse_message(line)
+        if data is None:
             if line.startswith("{"):
-                data = json.loads(line)
-                await self._handle_json_message(data)
-            else:
-                _LOGGER.debug("Non-JSON data received: %s", line)
-        except json.JSONDecodeError:
-            _LOGGER.debug("Invalid JSON: %s", line)
+                self.rejected_messages += 1
+            _LOGGER.debug("Ignored invalid or diagnostic bridge line: %s", line[:256])
+            return
+        await self._handle_json_message(data)
 
     async def _handle_json_message(self, data: dict[str, Any]) -> None:
         """Handle a parsed JSON message from Arduino.
@@ -244,6 +278,14 @@ class WiSafe2Coordinator(DataUpdateCoordinator):
         if device_id:
             # Normalize device ID to lowercase
             device_id = device_id.lower()
+            if device_id == self.bridge_radio_id:
+                # The bridge can appear in radio missing reports; it is not an alarm.
+                return
+            if device_id not in self._devices:
+                model = data.get("model", "").upper()
+                if not self.auto_discover or model not in DEVICE_MODELS or data.get("event") == "MISSING":
+                    self.unconfigured_devices[device_id] = data.get("model")
+                    return
 
             # Get or create device
             is_new = device_id not in self._devices
@@ -374,6 +416,9 @@ class WiSafe2Coordinator(DataUpdateCoordinator):
 
     async def async_send_command(self, command: str) -> bool:
         """Send a command to the bridge."""
+        # Monitoring is passive by default. Explicit local opt-in is required for any transmit.
+        if not self.config_entry.options.get("allow_commands", False):
+            raise PermissionError("WiSafe2 is in passive monitoring mode; commands are disabled")
         if not self._serial or not self._running:
             _LOGGER.error("Cannot send command: bridge not connected")
             return False
@@ -431,6 +476,9 @@ class WiSafe2Coordinator(DataUpdateCoordinator):
         name: str | None = None,
     ) -> WiSafe2Device:
         """Manually add a device."""
+        if not valid_device_id(device_id) or device_id.lower() == self.bridge_radio_id:
+            raise ValueError("Invalid alarm ID or bridge radio ID")
+        device_id = device_id.lower()
         if device_id not in self._devices:
             device = WiSafe2Device(device_id, model_id)
             if name:
@@ -462,7 +510,7 @@ class WiSafe2Coordinator(DataUpdateCoordinator):
             manufacturer="FireAngel",
             model=device.name or "Unknown Model",
             name=device.name or f"WiSafe2 Alarm {device_id}",
-            via_device=(DOMAIN, "bridge"),
+            via_device_id=device_registry.async_get_device(identifiers={(DOMAIN, "bridge")}).id,
         )
         
         # Dispatch signal to platforms to dynamically create entities
@@ -490,3 +538,4 @@ class WiSafe2Coordinator(DataUpdateCoordinator):
             self.hass.config_entries.async_update_entry(
                 self.config_entry, options=new_options
             )
+
