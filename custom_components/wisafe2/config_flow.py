@@ -18,6 +18,8 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 
+from .protocol import valid_device_id
+
 from .const import (
     DOMAIN,
     CONF_SERIAL_PORT,
@@ -165,7 +167,7 @@ class WiSafe2ConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             device_id = user_input.get("device_id", "").strip().lower()
 
-            if not device_id or len(device_id) != 6:
+            if not valid_device_id(device_id) or device_id == "a5b813":
                 errors["device_id"] = "invalid_device_id"
             elif any(d["device_id"] == device_id for d in self._devices):
                 errors["device_id"] = "device_already_exists"
@@ -242,7 +244,7 @@ class WiSafe2OptionsFlow(OptionsFlow):
             elif action == "save":
                 return self.async_create_entry(
                     title="",
-                    data={"devices": self._devices},
+                    data={**self.config_entry.options, "devices": self._devices},
                 )
 
         # Build device list for display
@@ -285,7 +287,7 @@ class WiSafe2OptionsFlow(OptionsFlow):
         if user_input is not None:
             device_id = user_input.get("device_id", "").strip().lower()
 
-            if not device_id or len(device_id) != 6:
+            if not valid_device_id(device_id) or device_id == self.config_entry.options.get("bridge_radio_id", "a5b813").lower():
                 errors["device_id"] = "invalid_device_id"
             elif any(d["device_id"] == device_id for d in self._devices):
                 errors["device_id"] = "device_already_exists"
@@ -366,3 +368,4 @@ class WiSafe2OptionsFlow(OptionsFlow):
 
 class CannotConnect(HomeAssistantError):
     """Error to indicate we cannot connect."""
+

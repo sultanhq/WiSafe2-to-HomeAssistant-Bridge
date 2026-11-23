@@ -128,8 +128,12 @@ class WiSafe2DeviceBinarySensorBase(CoordinatorEntity, BinarySensorEntity):
             manufacturer="FireAngel",
             model=device.name or "Unknown Model",
             name=device.name or f"WiSafe2 Alarm {device.device_id}",
-            via_device=(DOMAIN, "bridge"),
         )
+
+    @property
+    def available(self) -> bool:
+        return (self.coordinator.bridge_online and self._device.last_seen is not None
+                and self._device.is_online is True)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -154,6 +158,10 @@ class WiSafe2DeviceConnectivitySensor(WiSafe2DeviceBinarySensorBase):
         """Initialize the sensor."""
         super().__init__(coordinator, config_entry, device)
         self._attr_unique_id = f"{device.device_id}_connectivity"
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.bridge_online
 
     @property
     def is_on(self) -> bool:
@@ -182,12 +190,16 @@ class WiSafe2DeviceProblemSensor(WiSafe2DeviceBinarySensorBase):
         """Return true if device has a problem."""
         # Problem if low battery, off base, or failed test
         battery_low = self._device.battery_status.lower() == "low"
-        off_base = self._device.base_status.lower() in ["removed", "off_base"]
+        off_base = self._device.base_status.lower() in ["off", "removed", "off_base"]
         test_failed = (
             self._device.last_test_result
             and "fail" in self._device.last_test_result.lower()
         )
-        return battery_low or off_base or test_failed
+        if battery_low or off_base or test_failed:
+            return True
+        if self._device.battery_status == "unknown" or self._device.base_status == "unknown":
+            return None
+        return False
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -196,7 +208,7 @@ class WiSafe2DeviceProblemSensor(WiSafe2DeviceBinarySensorBase):
         problems = []
         if self._device.battery_status.lower() == "low":
             problems.append("Low Battery")
-        if self._device.base_status.lower() in ["removed", "off_base"]:
+        if self._device.base_status.lower() in ["off", "removed", "off_base"]:
             problems.append("Off Base")
         if (
             self._device.last_test_result
@@ -229,12 +241,15 @@ class WiSafe2DeviceSmokeSensor(WiSafe2DeviceBinarySensorBase):
 
         Arduino event: "FIRE EMERGENCY"
         """
-        event = self._device.last_event
-        if event:
-            event_upper = event.upper()
-            if "FIRE EMERGENCY" in event_upper:
-                return True
-        return False
+        return self._device.smoke_active
+
+    @property
+    def device_class(self):
+        return BinarySensorDeviceClass.HEAT if self._device.device_type == DEVICE_TYPE_HEAT else BinarySensorDeviceClass.SMOKE
+
+    @property
+    def name(self):
+        return "Heat" if self._device.device_type == DEVICE_TYPE_HEAT else "Smoke"
 
 
 class WiSafe2DeviceCOSensor(WiSafe2DeviceBinarySensorBase):
@@ -259,9 +274,4 @@ class WiSafe2DeviceCOSensor(WiSafe2DeviceBinarySensorBase):
 
         Arduino event: "CARBON MONOXIDE EMERGENCY"
         """
-        event = self._device.last_event
-        if event:
-            event_upper = event.upper()
-            if "CARBON MONOXIDE EMERGENCY" in event_upper:
-                return True
-        return False
+        return self._device.co_active

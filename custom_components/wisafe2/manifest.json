@@ -1,12 +1,13 @@
 {
   "domain": "wisafe2",
   "name": "WiSafe2 FireAngel Bridge",
-  "codeowners": ["@richard"],
+  "codeowners": ["@sultanhq"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/richard/WiSafe2-to-HomeAssistant-Bridge",
+  "documentation": "https://github.com/sultanhq/WiSafe2-to-HomeAssistant-Bridge",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/richard/WiSafe2-to-HomeAssistant-Bridge/issues",
+  "issue_tracker": "https://github.com/sultanhq/WiSafe2-to-HomeAssistant-Bridge/issues",
   "requirements": ["pyserial==3.5"],
-  "version": "1.0.3"
+  "version": "1.0.4"
 }
+

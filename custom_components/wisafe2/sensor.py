@@ -94,6 +94,13 @@ class WiSafe2BridgeStatusSensor(CoordinatorEntity, SensorEntity):
         return "Online" if self.coordinator.bridge_online else "Offline"
 
     @property
+    def extra_state_attributes(self):
+        return {"bridge_radio_id": self.coordinator.bridge_radio_id,
+                "rejected_messages": self.coordinator.rejected_messages,
+                "unconfigured_devices": self.coordinator.unconfigured_devices,
+                "monitoring_mode": "passive" if not self.coordinator.config_entry.options.get("allow_commands", False) else "commands_enabled"}
+
+    @property
     def icon(self) -> str:
         """Return the icon."""
         if self.coordinator.bridge_online:
@@ -172,8 +179,11 @@ class WiSafe2DeviceSensorBase(CoordinatorEntity, SensorEntity):
             manufacturer="FireAngel",
             model=device.name or "Unknown Model",
             name=device.name or f"WiSafe2 Alarm {device.device_id}",
-            via_device=(DOMAIN, "bridge"),
         )
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.bridge_online and self._device.last_seen is not None and self._device.is_online is True
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -240,9 +250,9 @@ class WiSafe2DeviceBaseSensor(WiSafe2DeviceSensorBase):
     def icon(self) -> str:
         """Return the icon based on base status."""
         status = self._device.base_status.lower()
-        if status == "attached" or status == "on_base":
+        if status in {"on", "attached", "on_base"}:
             return "mdi:home"
-        elif status == "removed" or status == "off_base":
+        elif status in {"off", "removed", "off_base"}:
             return "mdi:home-alert"
         return "mdi:home-outline"
 
@@ -330,3 +340,4 @@ class WiSafe2DeviceLastSeenSensor(WiSafe2DeviceSensorBase):
     def native_value(self) -> datetime | None:
         """Return the last seen timestamp."""
         return self._device.last_seen
+
